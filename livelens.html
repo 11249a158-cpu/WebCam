@@ -1,0 +1,738 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>LiveLens – Real-Time Webcam Filters</title>
+  <meta name="description" content="Apply stunning real-time filters to your webcam feed including B&W, sepia, glitch, face distortion, pixelate, and more."/>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet"/>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:        #09090f;
+      --surface:   #13131e;
+      --surface2:  #1c1c2e;
+      --border:    #2a2a42;
+      --accent:    #7c3aed;
+      --accent2:   #a855f7;
+      --neon:      #c084fc;
+      --text:      #e8e8f0;
+      --muted:     #6b6b8a;
+      --danger:    #f43f5e;
+      --green:     #22d3ee;
+      --gold:      #fbbf24;
+    }
+
+    body {
+      font-family: 'Outfit', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* Animated background blobs */
+    .bg-blobs {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 0;
+      overflow: hidden;
+    }
+    .blob {
+      position: absolute;
+      border-radius: 50%;
+      filter: blur(80px);
+      opacity: 0.25;
+      animation: float 10s ease-in-out infinite alternate;
+    }
+    .blob1 { width: 500px; height: 500px; background: #7c3aed; top: -150px; left: -150px; animation-duration: 12s; }
+    .blob2 { width: 400px; height: 400px; background: #db2777; top: 30%; right: -120px; animation-duration: 9s; animation-delay: -3s; }
+    .blob3 { width: 350px; height: 350px; background: #0ea5e9; bottom: -100px; left: 30%; animation-duration: 11s; animation-delay: -6s; }
+    @keyframes float { from { transform: translate(0,0) scale(1); } to { transform: translate(30px,40px) scale(1.1); } }
+
+    .app { position: relative; z-index: 1; display: flex; flex-direction: column; min-height: 100vh; }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 1.2rem 2rem;
+      border-bottom: 1px solid var(--border);
+      background: rgba(9,9,15,0.7);
+      backdrop-filter: blur(16px);
+    }
+    .logo {
+      display: flex; align-items: center; gap: .6rem;
+      font-size: 1.5rem; font-weight: 800; letter-spacing: -.5px;
+    }
+    .logo-icon { font-size: 1.8rem; }
+    .logo span { background: linear-gradient(135deg, var(--accent2), var(--neon)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+    .badge {
+      font-size: .72rem; font-weight: 600; letter-spacing: 1px;
+      padding: .25rem .7rem; border-radius: 99px;
+      background: rgba(124,58,237,.2); border: 1px solid var(--accent);
+      color: var(--neon); text-transform: uppercase;
+    }
+
+    main {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 1fr 320px;
+      gap: 1.5rem;
+      padding: 1.5rem 2rem;
+      max-width: 1400px;
+      width: 100%;
+      margin: 0 auto;
+    }
+
+    .camera-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 1rem;
+    }
+
+    .viewport {
+      position: relative;
+      border-radius: 20px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      aspect-ratio: 16/9;
+      box-shadow: 0 0 60px rgba(124,58,237,.18), inset 0 0 60px rgba(0,0,0,.4);
+    }
+
+    video { display: none; }
+    canvas#output {
+      width: 100%; height: 100%;
+      display: block;
+      object-fit: cover;
+    }
+
+    /* HUD corners */
+    .hud-corner {
+      position: absolute;
+      width: 28px; height: 28px;
+      border-color: var(--neon);
+      border-style: solid;
+      opacity: .6;
+    }
+    .hud-corner.tl { top: 12px; left: 12px; border-width: 2px 0 0 2px; }
+    .hud-corner.tr { top: 12px; right: 12px; border-width: 2px 2px 0 0; }
+    .hud-corner.bl { bottom: 12px; left: 12px; border-width: 0 0 2px 2px; }
+    .hud-corner.br { bottom: 12px; right: 12px; border-width: 0 2px 2px 0; }
+
+    .rec-badge {
+      position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+      display: flex; align-items: center; gap: .4rem;
+      font-size: .75rem; font-weight: 600; letter-spacing: 1px;
+      color: var(--text); text-transform: uppercase;
+      background: rgba(0,0,0,.55); backdrop-filter: blur(8px);
+      padding: .3rem .8rem; border-radius: 99px;
+      border: 1px solid rgba(255,255,255,.1);
+      opacity: 0; transition: opacity .3s;
+    }
+    .rec-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--danger);
+      animation: blink 1s ease infinite;
+    }
+    @keyframes blink { 0%,100%{opacity:1;} 50%{opacity:.2;} }
+    .rec-badge.visible { opacity: 1; }
+
+    .filter-name-hud {
+      position: absolute; bottom: 14px; left: 50%; transform: translateX(-50%);
+      font-size: .8rem; font-weight: 600; letter-spacing: 2px; text-transform: uppercase;
+      color: var(--neon); background: rgba(0,0,0,.55); backdrop-filter: blur(8px);
+      padding: .3rem 1rem; border-radius: 99px;
+      border: 1px solid rgba(192,132,252,.25);
+      pointer-events: none;
+      transition: opacity .3s;
+      white-space: nowrap;
+    }
+
+    .start-overlay {
+      position: absolute; inset: 0;
+      display: flex; flex-direction: column; align-items: center; justify-content: center;
+      gap: 1rem; background: rgba(9,9,15,.9);
+      transition: opacity .4s;
+    }
+    .start-overlay.hidden { opacity: 0; pointer-events: none; }
+    .start-icon { font-size: 4rem; }
+    .start-overlay h2 { font-size: 1.4rem; font-weight: 700; }
+    .start-overlay p { color: var(--muted); font-size: .9rem; }
+
+    .btn {
+      display: inline-flex; align-items: center; gap: .5rem;
+      padding: .65rem 1.4rem; border-radius: 10px; font-size: .9rem;
+      font-family: 'Outfit', sans-serif; font-weight: 600;
+      cursor: pointer; border: none; transition: all .2s;
+    }
+    .btn-primary {
+      background: linear-gradient(135deg, var(--accent), var(--accent2));
+      color: #fff;
+      box-shadow: 0 4px 24px rgba(124,58,237,.4);
+    }
+    .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 8px 32px rgba(168,85,247,.5); }
+    .btn-secondary {
+      background: var(--surface2);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .btn-secondary:hover { background: var(--border); }
+    .btn-danger {
+      background: rgba(244,63,94,.15);
+      color: var(--danger);
+      border: 1px solid rgba(244,63,94,.3);
+    }
+    .btn-danger:hover { background: rgba(244,63,94,.25); }
+
+    .controls-row {
+      display: flex; gap: .75rem; flex-wrap: wrap; align-items: center;
+    }
+    .controls-row .spacer { flex: 1; }
+
+    .sidebar {
+      display: flex; flex-direction: column; gap: 1.2rem;
+    }
+
+    .card {
+      background: rgba(19,19,30,.8);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 1.2rem;
+      backdrop-filter: blur(12px);
+    }
+    .card-title {
+      font-size: .72rem; font-weight: 700; letter-spacing: 2px;
+      text-transform: uppercase; color: var(--muted);
+      margin-bottom: 1rem;
+    }
+
+    .filter-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: .6rem;
+    }
+    .filter-btn {
+      position: relative; overflow: hidden;
+      padding: .75rem .5rem;
+      border-radius: 10px;
+      border: 1px solid var(--border);
+      background: var(--surface2);
+      cursor: pointer;
+      color: var(--text);
+      font-family: 'Outfit', sans-serif;
+      font-size: .82rem; font-weight: 500;
+      text-align: center;
+      transition: all .2s;
+    }
+    .filter-btn .fi { display: block; font-size: 1.4rem; margin-bottom: .3rem; }
+    .filter-btn:hover { border-color: var(--accent2); background: rgba(124,58,237,.15); transform: translateY(-1px); }
+    .filter-btn.active {
+      border-color: var(--accent2);
+      background: rgba(124,58,237,.25);
+      color: var(--neon);
+      box-shadow: 0 0 16px rgba(192,132,252,.25);
+    }
+    .filter-btn::after {
+      content: ''; position: absolute; inset: 0;
+      background: linear-gradient(135deg, rgba(168,85,247,.2), transparent);
+      opacity: 0; transition: opacity .2s;
+    }
+    .filter-btn.active::after { opacity: 1; }
+
+    .slider-wrap { margin-top: .5rem; }
+    .slider-label { display: flex; justify-content: space-between; font-size: .82rem; color: var(--muted); margin-bottom: .4rem; }
+    input[type=range] {
+      -webkit-appearance: none;
+      width: 100%; height: 4px;
+      border-radius: 4px;
+      background: linear-gradient(to right, var(--accent2) 0%, var(--accent2) var(--val,70%), var(--border) var(--val,70%), var(--border) 100%);
+      outline: none; cursor: pointer;
+    }
+    input[type=range]::-webkit-slider-thumb {
+      -webkit-appearance: none;
+      width: 16px; height: 16px;
+      border-radius: 50%; background: var(--neon);
+      box-shadow: 0 0 8px rgba(192,132,252,.6);
+      transition: transform .15s;
+    }
+    input[type=range]::-webkit-slider-thumb:hover { transform: scale(1.3); }
+
+    .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .6rem; }
+    .stat-card {
+      background: var(--surface2); border: 1px solid var(--border);
+      border-radius: 10px; padding: .7rem;
+    }
+    .stat-val { font-size: 1.2rem; font-weight: 700; color: var(--neon); }
+    .stat-lbl { font-size: .72rem; color: var(--muted); margin-top: .1rem; }
+
+    .snap-strip {
+      display: flex; gap: .5rem; overflow-x: auto; padding-bottom: .3rem;
+    }
+    .snap-strip::-webkit-scrollbar { height: 4px; }
+    .snap-strip::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+    .snap-thumb {
+      flex-shrink: 0; width: 80px; height: 55px;
+      border-radius: 8px; overflow: hidden;
+      border: 1px solid var(--border); cursor: pointer;
+      transition: border-color .2s, transform .15s;
+    }
+    .snap-thumb:hover { border-color: var(--accent2); transform: scale(1.05); }
+    .snap-thumb img { width: 100%; height: 100%; object-fit: cover; }
+
+    .empty-snaps {
+      font-size: .8rem; color: var(--muted); text-align: center;
+      padding: .5rem 0; width: 100%;
+    }
+
+    footer {
+      text-align: center; padding: 1rem;
+      color: var(--muted); font-size: .78rem;
+      border-top: 1px solid var(--border);
+    }
+
+    @keyframes glitch {
+      0%,100%{text-shadow:none;}
+      20%{text-shadow:2px 0 #f43f5e,-2px 0 #22d3ee;}
+      40%{text-shadow:-2px 0 #f43f5e,2px 0 #22d3ee;}
+      60%{text-shadow:2px 0 #f43f5e,-2px 0 #22d3ee;}
+    }
+    .filter-btn[data-filter="glitch"].active .fi { animation: glitch .3s infinite; }
+
+    @media(max-width:900px){
+      main { grid-template-columns: 1fr; }
+      .filter-grid { grid-template-columns: repeat(4,1fr); }
+    }
+  </style>
+</head>
+<body>
+<div class="bg-blobs">
+  <div class="blob blob1"></div>
+  <div class="blob blob2"></div>
+  <div class="blob blob3"></div>
+</div>
+
+<div class="app">
+  <header>
+    <div class="logo">
+      <span class="logo-icon">🎥</span>
+      <span>LiveLens</span>
+    </div>
+    <div class="badge">Live Filters</div>
+  </header>
+
+  <main>
+    <div class="camera-panel">
+      <div class="viewport">
+        <video id="vid" autoplay playsinline muted></video>
+        <canvas id="output"></canvas>
+        <div class="hud-corner tl"></div>
+        <div class="hud-corner tr"></div>
+        <div class="hud-corner bl"></div>
+        <div class="hud-corner br"></div>
+        <div class="rec-badge" id="recBadge">
+          <div class="rec-dot"></div> Live
+        </div>
+        <div class="filter-name-hud" id="filterHud">Normal</div>
+        <div class="start-overlay" id="startOverlay">
+          <div class="start-icon">📷</div>
+          <h2>Enable Your Camera</h2>
+          <p>Grant browser permission to start the live feed</p>
+          <button class="btn btn-primary" id="startBtn" onclick="startCamera()">▶ Start Camera</button>
+        </div>
+      </div>
+      <div class="controls-row">
+        <button class="btn btn-secondary" id="mirrorBtn" onclick="toggleMirror()">🪞 Mirror</button>
+        <button class="btn btn-secondary" onclick="takeSnapshot()">📸 Snapshot</button>
+        <div class="spacer"></div>
+        <button class="btn btn-danger" id="stopBtn" onclick="stopCamera()" style="display:none">⏹ Stop</button>
+      </div>
+    </div>
+
+    <div class="sidebar">
+      <div class="card">
+        <div class="card-title">🎨 Filters</div>
+        <div class="filter-grid" id="filterGrid"></div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">⚡ Intensity</div>
+        <div class="slider-wrap">
+          <div class="slider-label"><span>Effect strength</span><span id="intensityVal">70%</span></div>
+          <input type="range" id="intensitySlider" min="0" max="100" value="70" oninput="updateIntensity(this.value)"/>
+        </div>
+        <div class="slider-wrap" style="margin-top:1rem;">
+          <div class="slider-label"><span>Distortion level</span><span id="distortVal">50%</span></div>
+          <input type="range" id="distortSlider" min="0" max="100" value="50" oninput="updateDistort(this.value)"/>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">📊 Info</div>
+        <div class="stats-grid">
+          <div class="stat-card"><div class="stat-val" id="fpsVal">--</div><div class="stat-lbl">FPS</div></div>
+          <div class="stat-card"><div class="stat-val" id="resVal">--</div><div class="stat-lbl">Resolution</div></div>
+          <div class="stat-card"><div class="stat-val" id="snapCount">0</div><div class="stat-lbl">Snapshots</div></div>
+          <div class="stat-card"><div class="stat-val" id="filterLabel">Normal</div><div class="stat-lbl">Active</div></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">🖼 Snapshots</div>
+        <div class="snap-strip" id="snapStrip">
+          <div class="empty-snaps">No snapshots yet</div>
+        </div>
+      </div>
+    </div>
+  </main>
+
+  <footer>LiveLens &copy; 2026 — Real-time webcam filter engine powered by Canvas API</footer>
+</div>
+
+<script>
+const state = {
+  stream: null, animFrame: null,
+  filter: 'none', mirror: true,
+  intensity: 0.7, distort: 0.5,
+  snapshots: [], fps: 0,
+  lastTime: 0, frameCount: 0, active: false
+};
+
+const FILTERS = [
+  { id: 'none',      icon: '🔵', label: 'Normal' },
+  { id: 'bw',        icon: '⬜', label: 'B & W' },
+  { id: 'sepia',     icon: '🟤', label: 'Sepia' },
+  { id: 'invert',    icon: '🌀', label: 'Invert' },
+  { id: 'pixelate',  icon: '🟥', label: 'Pixelate' },
+  { id: 'glitch',    icon: '⚡', label: 'Glitch' },
+  { id: 'blur',      icon: '💨', label: 'Blur' },
+  { id: 'rgb_shift', icon: '🌈', label: 'RGB Shift' },
+  { id: 'mirror_h',  icon: '↔', label: 'Kaleid.' },
+  { id: 'edge',      icon: '✏', label: 'Edge' },
+  { id: 'neon',      icon: '🔆', label: 'Neon' },
+  { id: 'vhs',       icon: '📼', label: 'VHS' },
+  { id: 'posterize', icon: '🎭', label: 'Poster' },
+  { id: 'fisheye',   icon: '🐟', label: 'Fish-eye' },
+  { id: 'thermal',   icon: '🌡', label: 'Thermal' },
+  { id: 'noise',     icon: '📡', label: 'Noise' },
+];
+
+const vid = document.getElementById('vid');
+const canvas = document.getElementById('output');
+const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+// Build filter grid
+const filterGrid = document.getElementById('filterGrid');
+FILTERS.forEach(f => {
+  const btn = document.createElement('button');
+  btn.className = 'filter-btn' + (f.id === 'none' ? ' active' : '');
+  btn.dataset.filter = f.id;
+  btn.innerHTML = `<span class="fi">${f.icon}</span>${f.label}`;
+  btn.onclick = () => selectFilter(f.id);
+  filterGrid.appendChild(btn);
+});
+
+async function startCamera() {
+  try {
+    state.stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+      audio: false
+    });
+    vid.srcObject = state.stream;
+    await vid.play();
+    canvas.width  = vid.videoWidth  || 1280;
+    canvas.height = vid.videoHeight || 720;
+    document.getElementById('resVal').textContent = canvas.width + 'p';
+    state.active = true;
+    document.getElementById('startOverlay').classList.add('hidden');
+    document.getElementById('recBadge').classList.add('visible');
+    document.getElementById('stopBtn').style.display = '';
+    loop();
+  } catch(e) {
+    alert('Camera access denied or unavailable.\n' + e.message);
+  }
+}
+
+function stopCamera() {
+  state.active = false;
+  if(state.animFrame) cancelAnimationFrame(state.animFrame);
+  if(state.stream) state.stream.getTracks().forEach(t => t.stop());
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  document.getElementById('startOverlay').classList.remove('hidden');
+  document.getElementById('recBadge').classList.remove('visible');
+  document.getElementById('stopBtn').style.display = 'none';
+  document.getElementById('fpsVal').textContent = '--';
+}
+
+function toggleMirror() {
+  state.mirror = !state.mirror;
+  document.getElementById('mirrorBtn').style.color = state.mirror ? '#c084fc' : '';
+}
+
+function loop(ts = 0) {
+  if (!state.active) return;
+  state.animFrame = requestAnimationFrame(loop);
+  state.frameCount++;
+  if (ts - state.lastTime >= 1000) {
+    document.getElementById('fpsVal').textContent = state.frameCount;
+    state.frameCount = 0;
+    state.lastTime = ts;
+  }
+  if (vid.readyState < 2) return;
+  if (canvas.width !== vid.videoWidth && vid.videoWidth) {
+    canvas.width = vid.videoWidth;
+    canvas.height = vid.videoHeight;
+    document.getElementById('resVal').textContent = canvas.width + 'p';
+  }
+  ctx.save();
+  if (state.mirror) { ctx.translate(canvas.width, 0); ctx.scale(-1, 1); }
+  ctx.drawImage(vid, 0, 0, canvas.width, canvas.height);
+  ctx.restore();
+  applyFilter(state.filter);
+}
+
+function applyFilter(id) {
+  const w = canvas.width, h = canvas.height;
+  const t = state.intensity, d = state.distort;
+
+  if (id === 'none') return;
+
+  if (id === 'bw') {
+    const img = ctx.getImageData(0,0,w,h), data = img.data;
+    for(let i=0;i<data.length;i+=4){
+      const g = 0.299*data[i]+0.587*data[i+1]+0.114*data[i+2];
+      data[i]=lerp(data[i],g,t); data[i+1]=lerp(data[i+1],g,t); data[i+2]=lerp(data[i+2],g,t);
+    }
+    ctx.putImageData(img,0,0); return;
+  }
+
+  if (id === 'sepia') {
+    const img = ctx.getImageData(0,0,w,h), data = img.data;
+    for(let i=0;i<data.length;i+=4){
+      const r=data[i],g=data[i+1],b=data[i+2];
+      data[i]  =lerp(r,Math.min(255,r*0.393+g*0.769+b*0.189),t);
+      data[i+1]=lerp(g,Math.min(255,r*0.349+g*0.686+b*0.168),t);
+      data[i+2]=lerp(b,Math.min(255,r*0.272+g*0.534+b*0.131),t);
+    }
+    ctx.putImageData(img,0,0); return;
+  }
+
+  if (id === 'invert') {
+    const img = ctx.getImageData(0,0,w,h), data = img.data;
+    for(let i=0;i<data.length;i+=4){
+      data[i]=lerp(data[i],255-data[i],t);
+      data[i+1]=lerp(data[i+1],255-data[i+1],t);
+      data[i+2]=lerp(data[i+2],255-data[i+2],t);
+    }
+    ctx.putImageData(img,0,0); return;
+  }
+
+  if (id === 'pixelate') {
+    const size = Math.max(2,Math.round(d*40+2));
+    for(let y=0;y<h;y+=size) for(let x=0;x<w;x+=size){
+      const px=ctx.getImageData(x,y,1,1).data;
+      ctx.fillStyle=`rgb(${px[0]},${px[1]},${px[2]})`;
+      ctx.fillRect(x,y,size,size);
+    }
+    return;
+  }
+
+  if (id === 'glitch') {
+    const img = ctx.getImageData(0,0,w,h);
+    const copy = new Uint8ClampedArray(img.data);
+    const shift = Math.round(d*30+5);
+    const numSlices = Math.round(d*8+2);
+    for(let s=0;s<numSlices;s++){
+      const sy=Math.random()*h|0, sh=Math.random()*40+5|0;
+      const dx=(Math.random()-.5)*2*shift|0;
+      for(let y=sy;y<Math.min(sy+sh,h);y++) for(let x=0;x<w;x++){
+        const nx=(x+dx+w)%w;
+        const si=(y*w+nx)*4, di=(y*w+x)*4;
+        img.data[di]=copy[si]; img.data[di+1]=copy[si+1]; img.data[di+2]=copy[si+2];
+      }
+    }
+    const aberr=Math.round(d*8+2);
+    for(let y=0;y<h;y++) for(let x=0;x<w;x++){
+      const di=(y*w+x)*4;
+      const ri=(y*w+Math.min(w-1,x+aberr))*4;
+      const bi=(y*w+Math.max(0,x-aberr))*4;
+      img.data[di]=copy[ri]; img.data[di+2]=copy[bi+2];
+    }
+    ctx.putImageData(img,0,0); return;
+  }
+
+  if (id === 'blur') {
+    const radius=Math.round(d*12+1);
+    ctx.filter=`blur(${radius}px)`; ctx.drawImage(canvas,0,0); ctx.filter='none'; return;
+  }
+
+  if (id === 'rgb_shift') {
+    const img=ctx.getImageData(0,0,w,h), copy=new Uint8ClampedArray(img.data);
+    const s=Math.round(d*20+3);
+    for(let y=0;y<h;y++) for(let x=0;x<w;x++){
+      const di=(y*w+x)*4;
+      img.data[di]  =copy[(y*w+Math.min(w-1,x+s))*4];
+      img.data[di+2]=copy[(y*w+Math.max(0,x-s))*4+2];
+    }
+    ctx.putImageData(img,0,0); return;
+  }
+
+  if (id === 'mirror_h') {
+    const img=ctx.getImageData(0,0,w,h), data=img.data;
+    for(let y=0;y<h;y++) for(let x=0;x<w/2;x++){
+      const li=(y*w+x)*4, ri=(y*w+(w-1-x))*4;
+      data[ri]=data[li]; data[ri+1]=data[li+1]; data[ri+2]=data[li+2]; data[ri+3]=data[li+3];
+    }
+    ctx.putImageData(img,0,0); return;
+  }
+
+  if (id === 'edge') {
+    const img=ctx.getImageData(0,0,w,h), src=new Uint8ClampedArray(img.data), out=img.data;
+    for(let y=1;y<h-1;y++) for(let x=1;x<w-1;x++){
+      const i=(y*w+x)*4;
+      const gx=-src[((y-1)*w+x-1)*4]+src[((y-1)*w+x+1)*4]-2*src[(y*w+x-1)*4]+2*src[(y*w+x+1)*4]-src[((y+1)*w+x-1)*4]+src[((y+1)*w+x+1)*4];
+      const gy=-src[((y-1)*w+x-1)*4]-2*src[((y-1)*w+x)*4]-src[((y-1)*w+x+1)*4]+src[((y+1)*w+x-1)*4]+2*src[((y+1)*w+x)*4]+src[((y+1)*w+x+1)*4];
+      const mag=Math.min(255,Math.sqrt(gx*gx+gy*gy));
+      out[i]=out[i+1]=out[i+2]=mag; out[i+3]=255;
+    }
+    ctx.putImageData(img,0,0); return;
+  }
+
+  if (id === 'neon') {
+    const img=ctx.getImageData(0,0,w,h), src=new Uint8ClampedArray(img.data), data=img.data;
+    for(let y=1;y<h-1;y++) for(let x=1;x<w-1;x++){
+      const i=(y*w+x)*4;
+      const gx=-src[((y-1)*w+x-1)*4]+src[((y-1)*w+x+1)*4]-2*src[(y*w+x-1)*4]+2*src[(y*w+x+1)*4]-src[((y+1)*w+x-1)*4]+src[((y+1)*w+x+1)*4];
+      const gy=-src[((y-1)*w+x-1)*4]-2*src[((y-1)*w+x)*4]-src[((y-1)*w+x+1)*4]+src[((y+1)*w+x-1)*4]+2*src[((y+1)*w+x)*4]+src[((y+1)*w+x+1)*4];
+      const mag=Math.min(255,Math.sqrt(gx*gx+gy*gy)*2);
+      data[i]=Math.min(255,mag*(src[i]/255)*t*3);
+      data[i+1]=Math.min(255,mag*0.3);
+      data[i+2]=Math.min(255,mag*1.5);
+    }
+    ctx.putImageData(img,0,0); return;
+  }
+
+  if (id === 'vhs') {
+    const img=ctx.getImageData(0,0,w,h), data=img.data, src=new Uint8ClampedArray(img.data);
+    const cs=Math.round(d*6+1);
+    for(let y=0;y<h;y++){
+      const sd=y%2===0?0.75:1, noise=(Math.random()-.5)*30*d;
+      for(let x=0;x<w;x++){
+        const i=(y*w+x)*4;
+        data[i]  =clamp(src[(y*w+Math.min(w-1,x+cs))*4]*sd+noise);
+        data[i+1]=clamp(src[i+1]*sd+noise*.5);
+        data[i+2]=clamp(src[(y*w+Math.max(0,x-cs))*4+2]*sd+noise*.8);
+      }
+    }
+    if(Math.random()<0.1){
+      const jy=Math.random()*h|0, jshift=(Math.random()-.5)*60*d|0;
+      for(let x=0;x<w;x++){
+        const si=(jy*w+((x+jshift+w)%w))*4, di=(jy*w+x)*4;
+        data[di]=src[si]; data[di+1]=src[si+1]; data[di+2]=src[si+2];
+      }
+    }
+    ctx.putImageData(img,0,0); return;
+  }
+
+  if (id === 'posterize') {
+    const levels=Math.max(2,Math.round((1-d)*6+2)), step=255/levels;
+    const img=ctx.getImageData(0,0,w,h), data=img.data;
+    for(let i=0;i<data.length;i+=4){
+      data[i]=Math.round(data[i]/step)*step;
+      data[i+1]=Math.round(data[i+1]/step)*step;
+      data[i+2]=Math.round(data[i+2]/step)*step;
+    }
+    ctx.putImageData(img,0,0); return;
+  }
+
+  if (id === 'fisheye') {
+    const img=ctx.getImageData(0,0,w,h), out=new ImageData(w,h), src=img.data;
+    const cx=w/2, cy=h/2, k=d*1.5;
+    for(let y=0;y<h;y++) for(let x=0;x<w;x++){
+      const dx=(x-cx)/cx, dy=(y-cy)/cy, r=Math.sqrt(dx*dx+dy*dy);
+      const theta=r===0?0:Math.atan2(dy,dx), rn=Math.pow(r,1+k);
+      const sx=Math.round(cx+rn*Math.cos(theta)*cx);
+      const sy=Math.round(cy+rn*Math.sin(theta)*cy);
+      const si=(clamp(sy,0,h-1)*w+clamp(sx,0,w-1))*4, di=(y*w+x)*4;
+      out.data[di]=src[si]; out.data[di+1]=src[si+1];
+      out.data[di+2]=src[si+2]; out.data[di+3]=255;
+    }
+    ctx.putImageData(out,0,0); return;
+  }
+
+  if (id === 'thermal') {
+    const img=ctx.getImageData(0,0,w,h), data=img.data;
+    for(let i=0;i<data.length;i+=4){
+      const v=(0.299*data[i]+0.587*data[i+1]+0.114*data[i+2])/255;
+      const [r,g,b]=thermalColor(v);
+      data[i]=lerp(data[i],r,t); data[i+1]=lerp(data[i+1],g,t); data[i+2]=lerp(data[i+2],b,t);
+    }
+    ctx.putImageData(img,0,0); return;
+  }
+
+  if (id === 'noise') {
+    const img=ctx.getImageData(0,0,w,h), data=img.data, amount=d*80;
+    for(let i=0;i<data.length;i+=4){
+      const n=(Math.random()-.5)*amount*t;
+      data[i]=clamp(data[i]+n); data[i+1]=clamp(data[i+1]+n); data[i+2]=clamp(data[i+2]+n);
+    }
+    ctx.putImageData(img,0,0); return;
+  }
+}
+
+function lerp(a,b,t){ return a+(b-a)*t; }
+function clamp(v,lo=0,hi=255){ return Math.max(lo,Math.min(hi,v)); }
+function thermalColor(v){
+  if(v<0.25) return [0,Math.round(v*4*255),255];
+  if(v<0.5)  return [0,255,Math.round((1-(v-.25)*4)*255)];
+  if(v<0.75) return [Math.round((v-.5)*4*255),255,0];
+  return [255,Math.round((1-(v-.75)*4)*255),0];
+}
+
+function selectFilter(id) {
+  state.filter = id;
+  const name = FILTERS.find(f=>f.id===id)?.label || id;
+  document.getElementById('filterHud').textContent = name;
+  document.getElementById('filterLabel').textContent = name;
+  document.querySelectorAll('.filter-btn').forEach(b=>b.classList.toggle('active',b.dataset.filter===id));
+}
+
+function updateIntensity(v) {
+  state.intensity = v/100;
+  document.getElementById('intensityVal').textContent = v+'%';
+  document.getElementById('intensitySlider').style.setProperty('--val',v+'%');
+}
+function updateDistort(v) {
+  state.distort = v/100;
+  document.getElementById('distortVal').textContent = v+'%';
+  document.getElementById('distortSlider').style.setProperty('--val',v+'%');
+}
+
+function takeSnapshot() {
+  if(!state.active){ alert('Start the camera first!'); return; }
+  const url=canvas.toDataURL('image/png');
+  state.snapshots.unshift(url);
+  document.getElementById('snapCount').textContent=state.snapshots.length;
+  renderSnapshots();
+  const a=document.createElement('a'); a.href=url; a.download=`livelens_${Date.now()}.png`; a.click();
+}
+function renderSnapshots() {
+  const strip=document.getElementById('snapStrip');
+  if(!state.snapshots.length){ strip.innerHTML='<div class="empty-snaps">No snapshots yet</div>'; return; }
+  strip.innerHTML=state.snapshots.slice(0,8).map((url,i)=>
+    `<div class="snap-thumb" onclick="downloadSnap(${i})"><img src="${url}" alt="Snap ${i+1}"/></div>`
+  ).join('');
+}
+function downloadSnap(i){
+  const a=document.createElement('a'); a.href=state.snapshots[i]; a.download=`livelens_snap_${i+1}.png`; a.click();
+}
+
+updateIntensity(70);
+updateDistort(50);
+</script>
+</body>
+</html>
